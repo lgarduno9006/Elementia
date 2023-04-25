@@ -1,0 +1,7 @@
+---
+- hosts: all
+  tasks:
+  - name: saluda
+    shell: echo hola
+    register: result_valid
+  - debug: var=result_valid.stdout_lines
