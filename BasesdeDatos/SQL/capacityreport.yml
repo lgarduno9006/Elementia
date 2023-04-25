@@ -1,0 +1,35 @@
+- hosts: all
+
+  vars:
+    - user: usuario
+    - sqlserver_instance: localhost
+    - sqlserver_username: sa
+    - sqlserver_password: pass
+    - database_name: dbTesting
+    - database_filepath: C:\sqldb
+
+  tasks:
+    - name: Obtener la información de sysprocesses, a través de varias muestras, para poder estimar el reparto del consumo de CPU reciente
+      win_command: sqlcmd -S {{ sqlserver_instance }} -U {{ sqlserver_username }} -P {{ sqlserver_password }} -q "DECLARE @delay AS DATETIME; DECLARE @count AS INT; SET @delay='00:00:01'; SET @count=10; IF OBJECT_ID('tempdb..#tmp_sysprocesses') IS NOT NULL BEGIN  DROP TABLE [#tmp_sysprocesses]; END; SELECT [spid], [sid], [loginame],  [login_time], [dbid], [hostname], [program_name], [hostprocess], [cmd], [cpu],  [physical_io], GETDATE() AS [actual_date] INTO [#tmp_sysprocesses] FROM [sys].[sysprocesses]; WHILE(@count>0)BEGIN WAITFOR DELAY @delay; INSERT INTO [#tmp_sysprocesses] SELECT [spid], [sid], [loginame], [login_time], [dbid], [hostname], [program_name], [hostprocess], [cmd], [cpu], [physical_io], GETDATE() AS [actual_date] FROM [sys].[sysprocesses]; SET @count=@count-1; END; SELECT [spid], [sid], [loginame], [login_time], [dbid], [hostname], [program_name], [hostprocess], [cmd], [cpu], [physical_io], [actual_date] FROM [#tmp_sysprocesses] WHERE [spid]=208;"
+      register: result_valid
+    - debug: var=result_valid.stdout_lines
+
+    - name: Mostrar la info de las conexiones, con el consumo de CPU realizado
+      win_command: sqlcmd -S {{ sqlserver_instance }} -U {{ sqlserver_username }} -P {{ sqlserver_password }} -q "DECLARE @delay AS DATETIME; DECLARE @count AS INT; SET @delay='00:00:01'; SET @count=10; IF OBJECT_ID('tempdb..#tmp_sysprocesses') IS NOT NULL BEGIN  DROP TABLE [#tmp_sysprocesses]; END; SELECT [spid], [sid], [loginame],  [login_time], [dbid], [hostname], [program_name], [hostprocess], [cmd], [cpu],  [physical_io], GETDATE() AS [actual_date] INTO [#tmp_sysprocesses] FROM [sys].[sysprocesses]; WHILE(@count>0)BEGIN WAITFOR DELAY @delay; INSERT INTO [#tmp_sysprocesses] SELECT [spid], [sid], [loginame], [login_time], [dbid], [hostname], [program_name], [hostprocess], [cmd], [cpu], [physical_io], GETDATE() AS [actual_date] FROM [sys].[sysprocesses]; SET @count=@count-1; END; SELECT [spid], [loginame], DB_NAME([dbid]) AS [dbname], [login_time], [hostname], [program_name], [hostprocess], MAX([cpu])-MIN([cpu]) AS [cpu], MAX([physical_io])-MIN([physical_io]) AS [physical_io], COUNT(*) AS [veces] FROM [#tmp_sysprocesses] GROUP BY [spid], [sid], [loginame], [login_time], [dbid],  [hostname], [program_name], [hostprocess] HAVING MAX([cpu])-MIN([cpu])>0 ORDER BY MAX([cpu])-MIN([cpu]) DESC, MAX([physical_io])-MIN([physical_io]) DESC;"
+      register: result_valid
+    - debug: var=result_valid.stdout_lines
+
+    - name: Mostrar el consumo de CPU por cada BBDD, para ayudar a localizar el problema
+      win_command: sqlcmd -S {{ sqlserver_instance }} -U {{ sqlserver_username }} -P {{ sqlserver_password }} -q "DECLARE @delay AS DATETIME; DECLARE @count AS INT; SET @delay='00:00:01'; SET @count=10; IF OBJECT_ID('tempdb..#tmp_sysprocesses') IS NOT NULL BEGIN  DROP TABLE [#tmp_sysprocesses]; END; SELECT [spid], [sid], [loginame],  [login_time], [dbid], [hostname], [program_name], [hostprocess], [cmd], [cpu],  [physical_io], GETDATE() AS [actual_date] INTO [#tmp_sysprocesses] FROM [sys].[sysprocesses]; WHILE(@count>0)BEGIN WAITFOR DELAY @delay; INSERT INTO [#tmp_sysprocesses] SELECT [spid], [sid], [loginame], [login_time], [dbid], [hostname], [program_name], [hostprocess], [cmd], [cpu], [physical_io], GETDATE() AS [actual_date] FROM [sys].[sysprocesses]; SET @count=@count-1; END; SELECT [DRV_TBL].[dbname], SUM([DRV_TBL].[cpu]) AS [cpu] FROM(SELECT [spid], [loginame], DB_NAME([dbid]) AS [dbname], [login_time], MAX([cpu])-MIN ([cpu]) AS [cpu], MAX([physical_io])-MIN([physical_io]) AS [physical_io], COUNT(*) AS [veces] FROM [#tmp_sysprocesses] GROUP BY [spid], [sid], [loginame], [login_time], [dbid], [hostname], [program_name], [hostprocess] HAVING MAX([cpu])-MIN([cpu])>0) AS  [DRV_TBL] GROUP BY [DRV_TBL].[dbname] ORDER BY [cpu] DESC;"
+      register: result_valid
+    - debug: var=result_valid.stdout_lines
+
+    - name: Buscar espacio libre por base de datos
+      win_command: sqlcmd -S {{ sqlserver_instance }} -U {{ sqlserver_username }} -P {{ sqlserver_password }} -q "DECLARE @DatabaseInfo TABLE([ServerName] VARCHAR(100), [DatabaseName] VARCHAR(100), [FileSizeMB] INT, [LogicalFileName] sysname, [PhysicalFileName] NVARCHAR(520), [Status] sysname, [Updateability] sysname, [RecoveryMode] sysname, [FreeSpaceMB] INT, [FreeSpacePct] VARCHAR(7), [FreeSpacePages] INT, [PollDate] DATETIME); DECLARE @command VARCHAR(5000); SELECT @command='Use ['+'?' +'] SELECT @@servername as ServerName, '               +''''+'?'+''''+' AS  DatabaseName, CAST(sysfiles.size/128.0 AS int) AS FileSize, sysfiles.name AS  LogicalFileName, sysfiles.filename AS PhysicalFileName, CONVERT(sysname, DatabasePropertyEx(''?'',''Status'')) AS Status, CONVERT(sysname,DatabasePropertyEx(''?'',''Updateability'')) AS Updateability, CONVERT(sysname,DatabasePropertyEx(''?'',''Recovery'')) AS RecoveryMode, CAST(sysfiles.size/128.0 - CAST(FILEPROPERTY(sysfiles.name, '+''''+'SpaceUsed'+''''+' ) AS int)/128.0 AS int) AS FreeSpaceMB, CAST(100 * (CAST (((sysfiles.size/128.0 -CAST(FILEPROPERTY(sysfiles.name, '               +''''+'SpaceUsed'+''''+' ) AS int)/128.0)/(sysfiles.size/128.0)) AS decimal(4,2))) AS varchar(8)) + '+''''+'%'+''''+' AS FreeSpacePct, GETDATE() as PollDate FROM dbo.sysfiles'; INSERT INTO @DatabaseInfo([ServerName], [DatabaseName], [FileSizeMB],  [LogicalFileName], [PhysicalFileName], [Status], [Updateability], [RecoveryMode],  [FreeSpaceMB], [FreeSpacePct], [PollDate]) EXEC [sys].[sp_MSforeachdb] @command; SELECT [ServerName], [DatabaseName], [FileSizeMB], [LogicalFileName],  [PhysicalFileName], [Status], [Updateability], [RecoveryMode], [FreeSpaceMB],  [FreeSpacePct], [PollDate] FROM @DatabaseInfo ORDER BY [FreeSpacePct] DESC,  [ServerName], [DatabaseName];"
+      register: result_valid
+    - debug: var=result_valid.stdout_lines
+
+    - name: Información básica sobre las cantidades de memoria del sistema operativo y el estado
+      win_command: sqlcmd -S {{ sqlserver_instance }} -U {{ sqlserver_username }} -P {{ sqlserver_password }} -q "SELECT [total_physical_memory_kb] / 1024 AS [Physical Memory (MB)], [available_physical_memory_kb] / 1024 AS [Available Memory (MB)], [total_page_file_kb] / 1024 AS [Total Page File (MB)], [available_page_file_kb] / 1024 AS [Available Page File (MB)], [system_cache_kb] / 1024 AS [System Cache (MB)], [system_memory_state_desc] AS [System Memory State] FROM [sys].[dm_os_sys_memory] WITH(NOLOCK) OPTION(RECOMPILE);"
+      register: result_valid
+    - debug: var=result_valid.stdout_lines

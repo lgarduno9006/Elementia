@@ -1,0 +1,20 @@
+- hosts: all
+
+  vars:
+    - user: usuario
+    - sqlserver_instance: localhost
+    - sqlserver_username: sa
+    - sqlserver_password: pass
+    - database_name: dbTesting
+    - database_filepath: C:\sqldb
+
+  tasks:
+    - name: Indices statistics
+      win_command: sqlcmd -S {{ sqlserver_instance }} -U {{ sqlserver_username }} -P {{ sqlserver_password }} -q "USE [{{ database_name }}] SELECT [Obj].[name] AS [Table/View Name], [Obj].[type_desc] AS [TableType], [Indx].[name] AS [IndexName], [Indx].[index_id], [Indx].[type_desc], [Indx].[is_primary_key], [Indx].[is_unique], [Indx].[is_unique_constraint], [Indx].[has_filter], [IUS].[database_id], [IUS].[object_id], [IUS].[index_id], [IUS].[user_seeks], [IUS].[user_scans], [IUS].[user_lookups], [IUS].[user_updates], [IUS].[last_user_seek], [IUS].[last_user_scan], [IUS].[last_user_lookup], [IUS].[last_user_update], [IUS].[system_seeks], [IUS].[system_scans], [IUS].[system_lookups], [IUS].[system_updates], [IUS].[last_system_seek], [IUS].[last_system_scan], [IUS].[last_system_lookup], [IUS].[last_system_update], [IOS].[database_id], [IOS].[object_id], [IOS].[index_id], [IOS].[partition_number], [IOS].[hobt_id], [IOS].[leaf_insert_count], [IOS].[leaf_delete_count], [IOS].[leaf_update_count], [IOS].[leaf_ghost_count], [IOS].[nonleaf_insert_count], [IOS].[nonleaf_delete_count], [IOS].[nonleaf_update_count], [IOS].[leaf_allocation_count], [IOS].[nonleaf_allocation_count], [IOS].[leaf_page_merge_count], [IOS].[nonleaf_page_merge_count], [IOS].[range_scan_count], [IOS].[singleton_lookup_count], [IOS].[forwarded_fetch_count], [IOS].[lob_fetch_in_pages], [IOS].[lob_fetch_in_bytes], [IOS].[lob_orphan_create_count], [IOS].[lob_orphan_insert_count], [IOS].[row_overflow_fetch_in_pages], [IOS].[row_overflow_fetch_in_bytes], [IOS].[column_value_push_off_row_count], [IOS].[column_value_pull_in_row_count], [IOS].[row_lock_count], [IOS].[row_lock_wait_count], [IOS].[row_lock_wait_in_ms], [IOS].[page_lock_count], [IOS].[page_lock_wait_count], [IOS].[page_lock_wait_in_ms], [IOS].[index_lock_promotion_attempt_count], [IOS].[index_lock_promotion_count], [IOS].[page_latch_wait_count], [IOS].[page_latch_wait_in_ms], [IOS].[page_io_latch_wait_count], [IOS].[page_io_latch_wait_in_ms], [IOS].[tree_page_latch_wait_count], [IOS].[tree_page_latch_wait_in_ms], [IOS].[tree_page_io_latch_wait_count], [IOS].[tree_page_io_latch_wait_in_ms], [IOS].[page_compression_attempt_count], [IOS].[page_compression_success_count], [IOS].[version_generated_inrow], [IOS].[version_generated_offrow], [IOS].[ghost_version_inrow], [IOS].[ghost_version_offrow], [IOS].[insert_over_ghost_version_inrow], [IOS].[insert_over_ghost_version_offrow] FROM [sys].[indexes] AS [Indx] INNER JOIN [sys].[objects] AS [Obj] ON [Obj].[object_id]=[Indx].[object_id] LEFT JOIN [sys].[dm_db_index_usage_stats] AS [IUS] ON [Indx].[index_id]=[IUS].[index_id] AND [IUS].[object_id]=[Obj].[object_id] LEFT JOIN [sys].[dm_db_index_operational_stats](NULL, NULL, NULL, NULL) AS [IOS] ON [Indx].[object_id]=[IOS].[object_id] AND [Indx].[index_id]=[IOS].[index_id] WHERE([Obj].[type_desc]='USER_TABLE' OR [Obj].[type_desc]='VIEW') ORDER BY [Obj].[name], [Indx].[name], [IUS].[user_updates], [IUS].[user_lookups], [IUS].[user_seeks], [IUS].[user_scans] DESC;"
+      register: result_valid
+    - debug: var=result_valid.stdout_lines
+
+    - name: Statistics of Stored Procedures
+      win_command: sqlcmd -S {{ sqlserver_instance }} -U {{ sqlserver_username }} -P {{ sqlserver_password }} -q "USE [{{ database_name }}] SELECT [d].[object_id], [d].[database_id], OBJECT_NAME([d].[object_id], [d].[database_id]) AS [proc name], [d].[cached_time], [d].[last_execution_time], [d].[total_elapsed_time], [d].[total_elapsed_time] / [d].[execution_count] AS [avg_elapsed_time], [d].[last_elapsed_time], [d].[execution_count] FROM [sys].[dm_exec_procedure_stats] AS [d] ORDER BY [d].[total_worker_time] DESC;"
+      register: result_valid
+    - debug: var=result_valid.stdout_lines

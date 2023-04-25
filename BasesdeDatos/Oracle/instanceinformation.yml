@@ -1,0 +1,169 @@
+- hosts: localhost
+  
+  vars:
+    - oracle_host: '192.168.11.2'
+    - oracle_port: '1521'
+    - oracle_sid: 'noctopus11'
+    - oracle_user: 'marco'
+    - oracle_password: 'Temporal1'
+
+  gather_facts: true
+
+  environment:
+    LD_LIBRARY_PATH: /opt/oracle/instantclient_12_2
+
+
+   
+  tasks:
+   
+###########################################################################################################
+
+    - name: Informacion acerca de la BASE DE DATOS ORACLE
+      orclqry:
+        host: '{{ oracle_host }}'
+        port: '{{ oracle_port }}'
+        sid: '{{ oracle_sid }}'
+        user: '{{ oracle_user }}'
+        password: '{{ oracle_password }}'
+        query: "SELECT 
+                    dbid as DBID,
+                    name as Name,
+                    created as Created,
+                    log_mode as LogMode,
+                    open_mode as OpenMode,
+                    remote_archive as RemoteArchive,
+                    database_role as DatabaseRole,
+                    Platform_name as PlatformName,
+                    db_unique_name as DBUniqueName
+                FROM v$database"
+      register: reg_Query01
+      delegate_to: localhost
+
+    - set_fact: rs_Json01="{{ reg_Query01.message |from_json}}"
+      when: reg_Query01.changed
+      
+    - debug:
+        msg: "DBID: {{item.DBID}} NAME: {{item.NAME}} CREATED: {{item.CREATED}} LOGMODE: {{item.LOGMODE}} OPENMODE: {{item.OPENMODE}} REMOTEARCHIVE: {{item.REMOTEARCHIVE}} DATABASEROLE: {{item.DATABASEROLE}} PLATFORMNAME: {{item.PLATFORMNAME}}  DBUNIQUENAME: {{item.DBUNIQUENAME}}" 
+      with_items: "{{ rs_Json01 }}" 
+
+############################################################################################################
+
+
+    - name: Informacion acerca de las Instancias de DB Oracle
+      orclqry:
+        host: '{{ oracle_host }}'
+        port: '{{ oracle_port }}'
+        sid: '{{ oracle_sid }}'
+        user: '{{ oracle_user }}'
+        password: '{{ oracle_password }}'
+        query: "SELECT  instance_number as NumeroInstancia,
+                        instance_name as NombreInstancia,
+                        host_name as HostName,
+                        version as Version,
+                        database_status as DatabaseStatus,
+                        instance_role as InstanceRole     
+                FROM v$instance"
+      register: reg_Query02
+      delegate_to: localhost
+
+    - set_fact: rs_Json02="{{ reg_Query02.message |from_json}}"
+      when: reg_Query02.changed
+      
+    - debug:
+        msg: "NUMEROINSTANCIA: {{item.NUMEROINSTANCIA}} NOMBREINSTANCIA: {{item.NOMBREINSTANCIA}} HOSTNAME: {{item.HOSTNAME}} VERSION: {{item.VERSION}} DATABASESTATUS: {{item.DATABASESTATUS}} INSTANCEROLE: {{item.INSTANCEROLE}} " 
+      with_items: "{{ rs_Json02 }}" 
+
+############################################################################################################
+
+
+
+    - name: Informacion acerca del Core de Base de Datos
+      orclqry:
+        host: '{{ oracle_host }}'
+        port: '{{ oracle_port }}'
+        sid: '{{ oracle_sid }}'
+        user: '{{ oracle_user }}'
+        password: '{{ oracle_password }}'
+        query: "SELECT banner as Informacion
+                FROM v$version"
+      register: reg_Query03
+      delegate_to: localhost
+
+    - set_fact: rs_Json03="{{ reg_Query03.message |from_json}}"
+      when: reg_Query03.changed
+      
+    - debug:
+        msg: "INFORMACION: {{item.INFORMACION}} " 
+      with_items: "{{ rs_Json03 }}" 
+
+############################################################################################################
+
+    - name: Informacion acerca de SGA
+      orclqry:
+        host: '{{ oracle_host }}'
+        port: '{{ oracle_port }}'
+        sid: '{{ oracle_sid }}'
+        user: '{{ oracle_user }}'
+        password: '{{ oracle_password }}'
+        query: "SELECT  a.name as Nombre,
+                        a.value as Valor
+                FROM v$sga a"
+      register: reg_Query04
+      delegate_to: localhost
+
+    - set_fact: rs_Json04="{{ reg_Query04.message |from_json}}"
+      when: reg_Query04.changed
+      
+    - debug:
+        msg: "NOMBRE: {{item.NOMBRE}} VALOR: {{item.VALOR}} " 
+      with_items: "{{ rs_Json04 }}" 
+
+
+############################################################################################################
+
+    - name: Informacion acerca de Datafiles
+      orclqry:
+        host: '{{ oracle_host }}'
+        port: '{{ oracle_port }}'
+        sid: '{{ oracle_sid }}'
+        user: '{{ oracle_user }}'
+        password: '{{ oracle_password }}'
+        query: "SELECT   Substr(d.name,1,60) as DataFile,
+                          NVL(d.status,'UNKNOWN') as Status,
+                          d.enabled as Enabled,
+                          LPad(To_Char(Round(d.bytes/1024000,2),'9999990.00'),10,' ') as SizeMB
+                FROM v$datafile d 
+                ORDER BY 1"
+      register: reg_Query05
+      delegate_to: localhost
+
+    - set_fact: rs_Json05="{{ reg_Query05.message |from_json}}"
+      when: reg_Query05.changed
+      
+    - debug:
+        msg: "DATAFILE: {{item.DATAFILE}} STATUS: {{item.STATUS}} ENABLED: {{item.ENABLED}} SIZEMB: {{item.SIZEMB}} " 
+      with_items: "{{ rs_Json05 }}" 
+
+############################################################################################################
+
+    - name: Informacion acerca de Logs File
+      orclqry:
+        host: '{{ oracle_host }}'
+        port: '{{ oracle_port }}'
+        sid: '{{ oracle_sid }}'
+        user: '{{ oracle_user }}'
+        password: '{{ oracle_password }}'
+        query: "SELECT   l.group# as Grupo,
+                          Substr(l.member,1,60) as LogFile,
+                          NVL(l.status,'UNKNOWN') as Status
+                FROM v$logfile l 
+                ORDER BY 1,2"
+      register: reg_Query06
+      delegate_to: localhost
+
+    - set_fact: rs_Json06="{{ reg_Query06.message |from_json}}"
+      when: reg_Query06.changed
+      
+    - debug:
+        msg: "GRUPO: {{item.GRUPO}} LOGFILE: {{item.LOGFILE}} STATUS: {{item.STATUS}} " 
+      with_items: "{{ rs_Json06 }}" 
