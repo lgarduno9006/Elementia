@@ -1,0 +1,263 @@
+- hosts: winsshps
+
+  vars:
+    - user: usuario
+
+  tasks:
+    # - name: Execute Command
+    #   win_command: gpresult /Scope Computer /v
+    #   register: result_valid
+    # - debug: var=result_valid.stdout_lines
+    
+    - name: Renombrar cuentas de administrador
+      tags: Control de Acceso - Usuarios
+      community.windows.win_security_policy:
+        section: System Access
+        key: NewAdministratorName
+        value: kioadmin
+
+    - name: Renombrar cuentas de invitado
+      tags: Control de Acceso - Usuarios
+      community.windows.win_security_policy:
+        section: System Access
+        key: NewGuestName
+        value: kioguest
+
+    - name: Estatus de cuentas de invitado
+      tags: Control de Acceso - Usuarios
+      community.windows.win_security_policy:
+        section: System Access
+        key: EnableGuestAccount
+        value: 0
+
+    - name: Longitud minima para una contraseña
+      tags: Control de Acceso - Contraseñas
+      community.windows.win_security_policy:
+        section: System Access
+        key: MinimumPasswordLength
+        value: 12
+
+    - name: Requisitos de complejidad para una contraseña
+      tags: Control de Acceso - Contraseñas
+      community.windows.win_security_policy:
+        section: System Access
+        key: PasswordComplexity
+        value: 1
+
+    - name: Vigencia máxima de la contraseña
+      tags: Control de Acceso - Contraseñas
+      community.windows.win_security_policy:
+        section: System Access
+        key: MaximumPasswordAge
+        value: 60
+
+    - name: Uso mínimo de una contraseña para poder cambiarla
+      tags: Control de Acceso - Contraseñas
+      community.windows.win_security_policy:
+        section: System Access
+        key: MinimumPasswordAge
+        value: 5
+
+    - name: Historial de contraseñas
+      tags: Control de Acceso - Contraseñas
+      community.windows.win_security_policy:
+        section: System Access
+        key: PasswordHistorySize
+        value: 24
+
+    - name: Almacenamiento de contraseñas con cifrado reversible
+      tags: Control de Acceso - Contraseñas
+      community.windows.win_security_policy:
+        section: System Access
+        key: ClearTextPassword
+        value: 0
+
+    - name: Umbral de bloqueo de cuenta
+      tags: Control de Acceso - Contraseñas
+      community.windows.win_security_policy:
+        section: System Access
+        key: LockoutBadCount
+        value: 5
+
+    - name: Bloqueo temporal de usuario
+      tags: Control de Acceso - Contraseñas
+      community.windows.win_security_policy:
+        section: System Access
+        key: ResetLockoutCount
+        value: 30
+
+    - name: Duración de bloqueo de cuenta
+      tags: Control de Acceso - Contraseñas
+      community.windows.win_security_policy:
+        section: System Access
+        key: LockoutDuration
+        value: 30
+
+    - name: Tipos de cifrado permitidos para kerberos
+      tags: Autenticacion segura
+      community.windows.win_security_policy:
+        section: Registry Values
+        key: MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\Kerberos\Parameters\SupportedEncryptionTypes
+        value: 4,24
+
+    - name: Límite de inactividad de la máquina
+      tags: Bloqueo de pantallas y sesiones
+      community.windows.win_security_policy:
+        section: Registry Values
+        key: MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\InactivityTimeoutSecs
+        value: 4,300
+
+    - name: Mensaje de texto para usuarios que intentan iniciar sesión
+      tags: Advertencias de acceso no autorizado (Banners)
+      community.windows.win_security_policy:
+        section: Registry Values
+        key: MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\LegalNoticeText
+        value: 7,Informacion de los Requisitos de Operativos y de Seguridad
+
+    # - name: Cuentas inactivas
+    #   tags: Control de acceso (roles, perfiles y privilegios)
+    #   community.windows.win_security_policy:
+    #     section: System Access
+    #     key: 
+    #     value: 
+
+    - name: Negar servicio de inicio de sesión como invitado
+      tags: Control de acceso (roles, perfiles y privilegios)
+      ansible.windows.win_user_right:
+        name: SeDenyServiceLogonRight
+        users:
+        - Guests
+        action: set
+
+    - name: Negar inicio de sesión localmente
+      tags: Control de acceso (roles, perfiles y privilegios)
+      ansible.windows.win_user_right:
+        name: SeDenyInteractiveLogonRight
+        users:
+        - Guests
+        action: set
+
+    - name: Permitir inicio de sesión localmente
+      tags: Acceso Remoto (usuarios y autenticación)
+      ansible.windows.win_user_right:
+        name: SeInteractiveLogonRight
+        users:
+        - Administrators
+        action: set
+
+    - name: Negar inicio de sesión a través de escritorio remoto
+      tags: Acceso Remoto (usuarios y autenticación)
+      ansible.windows.win_user_right:
+        name: SeDenyRemoteInteractiveLogonRight
+        users:
+        - Guests
+        - 'Local account'
+        - SERVICE
+        - 'LOCAL SERVICE'
+        action: set
+
+    - name: Iniciar sesión a través de servicios de escritorio remoto
+      tags: Acceso Remoto (usuarios y autenticación)
+      ansible.windows.win_user_right:
+        name: SeRemoteInteractiveLogonRight
+        users:
+        - Administrators
+        - 'Remote Desktop Users'
+        action: set
+
+    - name: Estado del firewall
+      tags: Protección de red (FW/HIPS)
+      community.windows.win_firewall:
+        state: enabled
+        profiles:
+        - Domain
+        - Private
+        - Public
+
+    - name: Bitácoras de auditoría (Eventos de sistemas)
+      tags: Bitácoras de seguridad
+      community.windows.win_security_policy:
+        section: Event Audit
+        key: AuditSystemEvents
+        value: 1
+
+    - name: Bitácoras de auditoría (Acceso a objetos)
+      tags: Bitácoras de seguridad
+      community.windows.win_security_policy:
+        section: Event Audit
+        key: AuditObjectAccess
+        value: 1
+
+    - name: Bitácoras de auditoría (Acceso a servicios de directorio)
+      tags: Bitácoras de seguridad
+      community.windows.win_security_policy:
+        section: Event Audit
+        key: AuditDSAccess
+        value: 1
+
+    - name: Bitácoras de auditoría (Cambio de directivas)
+      tags: Bitácoras de seguridad
+      community.windows.win_security_policy:
+        section: Event Audit
+        key: AuditPolicyChange
+        value: 1
+
+    - name: Bitácoras de auditoría (Eventos de inicio de sesion)
+      tags: Bitácoras de seguridad
+      community.windows.win_security_policy:
+        section: Event Audit
+        key: AuditLogonEvents
+        value: 1
+
+    - name: Bitácoras de auditoría (Eventos de inicio de sesion a cuentas)
+      tags: Bitácoras de seguridad
+      community.windows.win_security_policy:
+        section: Event Audit
+        key: AuditAccountLogon
+        value: 1
+
+    - name: Bitácoras de auditoría (Administracion de cuentas)
+      tags: Bitácoras de seguridad
+      community.windows.win_security_policy:
+        section: Event Audit
+        key: AuditAccountManage
+        value: 1
+
+    # - name: 
+    #   tags: 
+    #   community.windows.win_security_policy:
+    #     section: System Access
+    #     key: 
+    #     value:   
+
+    - name: Asegúrese de que 'Enable Windows NTP Client' esté configurado en 'Habilitado'
+      tags: Configuraciones de sincronización de tiempo
+      ansible.windows.win_regedit:
+        path: HKLM:\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient
+        name: Enabled
+        data: 1
+        type: dword
+
+    - name: Cambiar tiempo del sistema
+      tags: Configuraciones de sincronización de tiempo
+      ansible.windows.win_user_right:
+        name: SeSystemtimePrivilege
+        users:
+        - Administrators
+        - 'LOCAL SERVICE'
+        action: set
+      
+    - name: Apagar el sistema
+      tags: Directrices de apagado de sistema
+      ansible.windows.win_user_right:
+        name: SeShutdownPrivilege
+        users:
+        - Administrators
+        action: set
+      
+    - name: Permitir que el sistema se apague sin tener que iniciar sesión
+      tags: Directrices de apagado de sistema
+      community.windows.win_security_policy:
+        section: Registry Values
+        key: MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\ShutdownWithoutLogon
+        value: 4,0

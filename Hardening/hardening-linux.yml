@@ -1,0 +1,863 @@
+- hosts: linux3
+
+  vars:
+    - user: usuario
+    - allowremoteusers: ''
+    - allowremotegroups: ''
+    - denyremoteusers: ''
+    - denyremotegroups: ''
+    - repo:
+        Debian:
+        - dnf
+        RedHat:
+        - dnf
+    - installverified:
+        Debian:
+        - dnf
+        RedHat:
+        - rpm -q
+    - firewalld:
+        Debian:
+        - firewalld, firewall-config, firewall-applet
+        RedHat:
+        - firewalld, firewall-config, firewall-applet
+
+  tasks:
+    - name: Validar los actuales requisitos de contraseña.
+      tags: Control de Acceso / Contraseñas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - grep pam_cracklib.so /etc/pam.d/common-password
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+        
+    - name: Aplicar Política (retry=3 minlen=12 dcredit=-1 lcredit=-1 ocredit=-1 ucredit=-1)
+      tags: Control de Acceso / Contraseñas
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/pam.d/common-password
+        regexp: "pam_cracklib.so"
+        state: present
+        line: 'password required  pam_cracklib.so retry=3 minlen=12 dcredit=-1 lcredit=-1 ocredit=-1 ucredit=-1'
+
+    - name: Validar los actuales requisitos de contraseña de duracion de Contraseñas.
+      tags: Control de Acceso / Contraseñas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - sudo chage -l {{ user }}
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Aplicar Política (Duracion maxima de contraseñas  90 dias)
+      tags: Control de Acceso / Contraseñas
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/login.defs
+        regexp: "PASS_MAX_DAYS"
+        state: present
+        line: 'PASS_MAX_DAYS  90'
+    
+    - name: Aplicar Política (Duracion maxima de contraseñas  90 dias) al usuario {{ user }}
+      tags: Control de Acceso / Contraseñas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chage --maxdays 90 {{ user }}
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Validar los actuales requisitos de cifrado y recuerdo de Contraseñas
+      tags: Control de Acceso / Contraseñas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - grep pam_unix.so /etc/pam.d/common-password 
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Aplicar Política (remember=20, Cifrado= SHA512)
+      tags: Control de Acceso / Contraseñas
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/pam.d/common-password
+        regexp: "pam_unix.so"
+        state: present
+        line: 'password required  [success=1 default=bad] pam_unix.so use_authtok sha512 remember=20'
+
+    - name: Validar configuración actual sobre el bloqueo de cuentas por login fallidos
+      tags: Control de Acceso / Contraseñas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - grep pam_faillock.so /etc/pam.d/common-auth
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Aplicar Política (boqueo temporal de 30 min por un maximo de 5 intentos fallidos)
+      tags: Control de Acceso / Contraseñas
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/pam.d/common-auth
+        regexp: "pam_faillock.so"
+        state: present
+        line: 'auth required  pam_faillock.so preauth audit silent deny=5 unlock_time=1800'
+
+##Revise los archivos /etc/pam.d/password-auth y /etc/pam.d/system-auth y verifique que aparezcan las siguientes líneas pam_faillock.so alrededor de una línea pam_unix.so y pam_unix.so es [success = 1 default = malo] como aparece en ambos:  auth required pam_faillock.so preauth audit silent deny=5 unlock_time=1800 auth [success=1 default=bad] pam_unix.so auth [default=die] pam_faillock.so authfail audit deny=5 unlock_time=1800 auth sufficient pam_faillock.so authsucc audit deny=5 unlock_time=1800  
+
+    - name: Preparar el Permitir acceso de usuarios
+      tags: Control de Acceso / Acceso Remoto
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^AllowUsers"
+        state: present
+        line: 'AllowUsers !*'
+
+    - name: Permitir acceso de usuarios
+      tags: Control de Acceso / Acceso Remoto
+      become: true
+      become_user: root
+      replace:
+        path: /etc/ssh/sshd_config
+        regexp: '^(AllowUsers.*)(\!\*)$'
+        replace: '\1{{ allowremoteusers }} !*'
+
+    - name: Preparar el Permitir acceso de Grupos
+      tags: Control de Acceso / Acceso Remoto
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^AllowGroups"
+        state: present
+        line: 'AllowGroups !*'
+
+    - name: Permitir acceso de Grupos
+      tags: Control de Acceso / Acceso Remoto
+      become: true
+      become_user: root
+      replace:
+        path: /etc/ssh/sshd_config
+        regexp: '^(AllowGroups.*)(\!\*)$'
+        replace: '\1{{ allowremotegroups }} !*'
+
+#     - name: Hardening Linux - Ejecute los siguientes comandos y verifique que la salida coincida con al menos uno
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep "^AllowUsers" /etc/ssh/sshd_config AllowUsers <userlist> 
+#         - grep "^AllowGroups" /etc/ssh/sshd_config AllowGroups <grouplist> 
+#         - grep "^DenyUsers" /etc/ssh/sshd_config DenyUsers <userlist> 
+#         - grep "^DenyGroups" /etc/ssh/sshd_config DenyGroups <grouplist> 
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+    - name: Denegar acceso Remoto al Usuario Root
+      tags: Control de Acceso / Acceso Remoto
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^PermitRootLogin"
+        state: present
+        line: 'PermitRootLogin no'
+
+    - name: Aplicar politica sobre el Bloqueo de Pantalla
+      tags: Bloqueo de Pantalla y Sesiones
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^ClientAliveInterval"
+        state: present
+        line: 'ClientAliveInterval 300'
+
+    - name: Aplicar politica sobre el Conexiones Simultaneas
+      tags: Bloqueo de Pantalla y Sesiones
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^ClientAliveCountMax"
+        state: present
+        line: 'ClientAliveCountMax 0'
+
+    - name: Aplicar politica sobre el Bloqueo de Sesiones (tiempo de Vida)
+      tags: Bloqueo de Pantalla y Sesiones
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^LoginGraceTime"
+        state: present
+        line: 'LoginGraceTime 60'
+
+##Si GDM está instalado en el sistema, verifique que / etc / dconf / profile / gdm exista y contenga lo siguiente:  user-db:user system-db:gdm filedb:/usr/share/gdm/greeter-dconfdefaults  Luego verifique que las opciones banner-message-enable y bannermessage-text estén configuradas en uno de los archivos en el directorio /etc/dconf/db/gdm.d/:  [org/gnome/login-screen] bannermessage-enable=true bannermessage-text='<banner message>'  Esto normalmente se configura en /etc/dconf/db/gdm.d/01-bannermessage. Los parches de seguridad deben aplicarse cada 3 meses, los parches críticos deben aplicarse de inmediato. 
+
+    - name: Install DNF
+      tags: Parches de Seguridad y Actualizaciones
+      become: true
+      become_user: root
+      package:
+        name: "{{ repo[ansible_os_family] }}"
+
+    - name: Aplicar politica sobre Actualizacion de Parches
+      tags: Parches de Seguridad y Actualizaciones
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/dnf/dnf.config
+        regexp: "^gpgcheck"
+        state: present
+        line: 'gpgcheck=1'
+
+##Si no están siendo utilizados se deberán deshabilitar los siguientes servicios : chargen, daytime, discard, echo, time, tftp, xinetd, XWindow, Servidor Avahi, Servidor CUPS, servidor DHCP, Talk, NFS, RPC, LDAP, DNS, FTP, HTTP, IMAP,  POP3, Samba, HTTP, Proxy, SNMP (Asegurar que el agente de transferencia de correo esté configurado solo en modo local), NIS, RSH, Telnet, TFTP, rsync Los servicios inseguros como  Telnet FTP, TFTP, o RSH deberían estar desactivados en los sistemas y si por necesidades del negocio se requieren  abrir deberá documentarse un RAR. 
+
+    - name: Aplicar politica sobre Deshabilitacion de servicios
+      tags: Servicios y ptos no necesarios o vulnerables
+      become: true
+      become_user: root
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "^MACs"
+        state: present
+        line: 'MACs hmac-sha2-512etm@openssh.com,hmac-sha2-256etm@openssh.com,umac-128etm@openssh.com,hmac-sha2512,hmac-sha2-256,umac-128@openssh.com,curve25519sha256@libssh.org,diffie-hellmangroup-exchange-sha256'
+
+    - name: Install firewalld
+      tags: Proteccion de red
+      become: true
+      become_user: root
+      package:
+        name: "{{ firewalld[ansible_os_family] }}"
+        state: latest
+    
+    - name: Habilitar el Firewall.
+      tags: Proteccion de red
+      become: true
+      become_user: root
+      command: "systemctl enable --now firewalld.service"
+
+    - name: Validar la existencia de AIDE.
+      tags: Monitoreo de la Integridad de conf. y archivos
+      become: true
+      become_user: root
+      command: "aide -Ss"
+
+#     - name: Hardening Linux - Run the following command and verify that the nodev option is set on /dev/shm .  
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - mount | grep /dev/shm tmpfs on /dev/shm type tmpfs (rw,nosuid,nodev,noexec,relatime)
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Se recomienda el uso del sistema de archivos XFS o ext4  para RHEL 7 y ext4 para RHEL 6.  
+
+#     - name: Hardening Linux - Ejecute el siguiente comando
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep actions /etc/audit/audit.rules 
+#         - auditctl -l | grep actions   
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+#     - name: Hardening Linux - Ejecute el siguiente comando y verifique las coincidencias de salida
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep logins /etc/audit/audit.rules -w /var/log/lastlog -p wa -k logins -w /var/run/faillock/ -p wa -k logins
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+#     - name: Hardening Linux - En un sistema de 32 bits, Ejecute los siguientes comandos
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep perm_mod /etc/audit/audit.rules 
+#         - auditctl -l | grep perm_mod  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Verifique la salida de ambos partidos:  -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+
+#     - name: Hardening Linux - En un sistema de 64 bits, Ejecute los siguientes comandos
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep perm_mod /etc/audit/audit.rules 
+#         - auditctl -l | grep perm_mod  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Verifique la salida de ambos partidos:  -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+
+#     - name: Hardening Linux - On a 32 bit system, Run the following commands
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep time-change /etc/audit/audit.rules 
+#         - auditctl -l | grep time-change  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Verifique la salida de ambos partidos:  -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k timechange -a always,exit -F arch=b32 -S clock_settime -k time-change -w /etc/localtime -p wa -k time-change
+
+#     - name: Hardening Linux - En un sistema de 64 bits, Ejecute los siguientes comandos
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep time-change /etc/audit/audit.rules 
+#         - auditctl -l | grep time-change  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Verifique la salida de ambos partidos:  -a always,exit -F arch=b64 -S adjtimex -S settimeofday -k time-change -a always,exit -F arch=b32 -S adjtimex -S settimeofday -S stime -k time-change -a always,exit -F arch=b64 -S clock_settime -k time-change -a always,exit -F arch=b32 -S clock_settime -k time-change -w /etc/localtime -p wa -k time-change 
+
+#     - name: Hardening Linux - Ejecute los siguientes comandos
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep identity /etc/audit/audit.rules 
+#         - auditctl -l | grep identity  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Verifique la salida de ambos partidos:  -w /etc/group -p wa -k identity -w /etc/passwd -p wa -k identity -w /etc/gshadow -p wa -k identity -w /etc/shadow -p wa -k identity -w /etc/security/opasswd -p wa -k identity   
+
+#     - name: Hardening Linux - En un sistema de 32 bits, Ejecute los siguientes comandos
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep system-locale /etc/audit/audit.rules 
+#         - auditctl -l | grep system-locale  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Verifique la salida de ambos partidos:  -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale -w /etc/issue -p wa -k system-locale -w /etc/issue.net -p wa -k system-locale -w /etc/hosts -p wa k system-locale -w /etc/sysconfig/network -p wa -k system-locale -w /etc/sysconfig/network-scripts/ -p wa -k system-locale  
+
+#     - name: Hardening Linux - En un sistema de 64 bits, Ejecute los siguientes comandos
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep system-locale /etc/audit/audit.rules 
+#         - auditctl -l | grep system-locale  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Verifique la salida de ambos partidos:  -a always,exit -F arch=b64 -S sethostname -S setdomainname -k system-locale -a always,exit -F arch=b32 -S sethostname -S setdomainname -k system-locale -w /etc/issue -p wa -k system-locale -w /etc/issue.net -p wa -k system-locale w /etc/hosts -p wa -k system-locale -w /etc/sysconfig/network -p wa -k system-locale -w /etc/sysconfig/network-scripts/ -p wa -k system-locale
+
+#     - name: Hardening Linux - En un sistema de 32 bits, Ejecute los siguientes comandos
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep perm_mod /etc/audit/audit.rules 
+#         - auditctl -l | grep perm_mod  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Verify output of both matches:  -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+
+#     - name: Hardening Linux - En un sistema de 64 bits, Ejecute los siguientes comandos
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep perm_mod /etc/audit/audit.rules 
+#         - auditctl -l | grep perm_mod  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Verifique la salida de ambos partidos:  -a always,exit -F arch=b64 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b32 -S chmod -S fchmod -S fchmodat -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b64 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b32 -S chown -S fchown -S fchownat -S lchown -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b64 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod -a always,exit -F arch=b32 -S setxattr -S lsetxattr -S fsetxattr -S removexattr -S lremovexattr -S fremovexattr -F auid>=1000 -F auid!=4294967295 -k perm_mod
+
+#     - name: Hardening Linux - En un sistema de 32 bits, Ejecute los siguientes comandos
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep mounts /etc/audit/audit.rules 
+#         - auditctl -l | grep mounts  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Verifique la salida de ambos partidos:  -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts  
+
+#     - name: Hardening Linux - En un sistema de 64 bits, Ejecute los siguientes comandos
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep mounts /etc/audit/audit.rules 
+#         - auditctl -l | grep mounts  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Verifique la salida de ambos partidos:  -a always,exit -F arch=b64 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts -a always,exit -F arch=b32 -S mount -F auid>=1000 -F auid!=4294967295 -k mounts 
+
+#     - name: Hardening Linux - Ejecute el siguiente comando y verifique que la salida coincida
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep "^LogLevel" /etc/ssh/sshd_config LogLevel INFO 
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+#     - name: Hardening Linux - Ejecute el siguiente comando y verifique que el resultado esté "enabled"
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - systemctl is-enabled syslog-ng enabled 
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+#     - name: Hardening Linux - Especificar en la propiedad de max_log_file el espacio suficiente para el almacenamiento de al menos 60 días de bitácoras. Ejecute el siguiente comando y verifique las coincidencias de salida
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep max_log_file_action /etc/audit/auditd.conf max_log_file_action = keep_logs  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+#     - name: Hardening Linux - Ejecute el siguiente comando para habilitar syslog-ng
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - systemctl enable syslog-ng  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+# ##Asegurarse de que la máscara predeterminada es 027 o más restrictivo. 
+
+    - name: Configuración de permisos del gestor de arranque establecer permisos en la configuración de grub
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /boot/grub2/grub.conf
+        - chmod 700 /boot/grub2/grub.conf
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Configuración de permisos de banner motd
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/motd 
+        - chmod 644 /etc/motd  
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Configuración de permisos de banner issue
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/issue  
+        - chmod 644 /etc/issue  
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Configuración de permios de banner issue.net
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/issue.net 
+        - chmod 644 /etc/issue.net   
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos en todos los archivos de bitácora  existentes
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - find /var/log -type f -exec chmod gwx,o-rwx {} +  
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos en / etc / crontab
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/crontab 
+        - chmod 700 /etc/crontab  
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos en / etc / cron.hourly
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/cron.hourly 
+        - chmod 700 /etc/cron.hourly  
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos en /etc/cron.daily
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/cron.daily 
+        - chmod og-rwx /etc/cron.daily  
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos en /etc/cron.weekly
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/cron.weekly 
+        - chmod 700 /etc/cron.weekly  
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos en /etc/cron.monthly
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/cron.monthly 
+        - chmod og-rwx /etc/cron.monthly  
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos y propiedad para /etc/cron.allow y /etc/at.allow
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chmod 700 /etc/cron.allow 
+        - chmod 700 /etc/at.allow 
+        - chown root:root /etc/cron.allow 
+        - chown root:root /etc/at.allow   
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos en /etc/ssh/sshd_config  
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/ssh/sshd_config 
+        - chmod og-rwx /etc/ssh/sshd_config 
+        - chown root:root /etc/shadow 
+        - chmod 000 /etc/shadow   
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos en /etc/group
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/group 
+        - chmod 644 /etc/group  
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos en /etc/shadow-
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/shadow- 
+        - chmod 600 /etc/shadow-  
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos en /etc/gshadow-
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chown root:root /etc/gshadow- 
+        - chmod 600 /etc/gshadow-  
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Permisos en host.allow y hosts.deny   
+      tags: Definir Permisos archivos de sistemas
+      become: true
+      become_user: root
+      command: "{{ item }}"
+      register: result_valid
+      ignore_errors: yes
+      loop:
+        - chmod 644 /etc/hosts.allow   
+        - chmod 644 /etc/hosts.deny    
+    - debug: msg="{{ item.stdout_lines }}"
+      with_items: "{{ result_valid.results }}"
+      loop_control:
+        label: "{{ item }}"
+
+#     - name: Hardening Linux - Run the following command and verify output matches
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep "^restrict" /etc/ntp.conf restrict -4 default kod nomodify notrap nopeer noquery restrict -6 default kod nomodify notrap nopeer noquery  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##El -4 en la primera línea es opcional y las opciones después del valor predeterminado pueden aparecer en cualquier orden. Pueden existir líneas de restricción adicionales. 
+
+#     - name: Hardening Linux - Ejecute el siguiente comando y verifique que el servidor remoto esté configurado correctamente
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep "^(server|pool)" /etc/ntp.conf server <remote-server>  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+
+##Se pueden configurar múltiples servidores. 
+
+#     - name: Hardening Linux - Ejecute los siguientes comandos y verifique que '-u ntp= ntp' esté incluido en OPTIONS o ExecStart como se enumera
+#       tags: modulo1
+#       become: true
+#       become_user: root
+#       command: "{{ item }}"
+#       register: result_valid
+#       ignore_errors: yes
+#       loop:
+#         - grep "^OPTIONS" /etc/sysconfig/ntpd OPTIONS="-u ntp:ntp" 
+#         - grep "^ExecStart" /usr/lib/systemd/system/ntpd.service ExecStart=/usr/sbin/ntpd -u ntp:ntp $OPTIONS  
+#    - debug: msg="{{ item.stdout_lines }}"
+#      with_items: "{{ result_valid.results }}"
+#      loop_control:
+#        label: "{{ item }}"
+##Opciones adicionales pueden estar presentes.  
